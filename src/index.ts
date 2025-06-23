@@ -4,11 +4,13 @@ import { Boom } from '@hapi/boom';
 import * as dotenv from 'dotenv';
 import pino from 'pino';
 import { translateTextAuto, translateTextTo } from './translator.js';
+import { transcribeAudio } from './audioTranscriber.js';
 import qrcode from 'qrcode-terminal';
 import * as QRCode from 'qrcode';
 import * as fs from 'fs';
+import mime from 'mime-types'; // ensure this is installed
 
-const { makeWASocket, useMultiFileAuthState, DisconnectReason } = baileys;
+const { makeWASocket, useMultiFileAuthState, DisconnectReason, downloadMediaMessage } = baileys;
 
 dotenv.config();
 
@@ -37,6 +39,58 @@ async function startBot() {
                 }
 
                 const sender = msg.key.remoteJid;
+                if (!sender) continue;
+
+                // 🔊 Speech-to-Text
+                const sttMatch = rawText.match(/^\/stt(?:\/(\w{2}))?/);
+                if (sttMatch) {
+                    console.log('🟡 Received /stt command');
+                    const langCode = sttMatch[1] || process.env.SOURCE_LANG || 'ro';
+
+                    const contextInfo = msg.message?.extendedTextMessage?.contextInfo;
+                    const quoted = contextInfo?.quotedMessage;
+
+                    if (!quoted) {
+                        console.warn('⚠️ No quoted message found for /stt');
+                        await sock.sendMessage(sender, { text: '⚠️ Please reply to a voice message with /stt' }, { quoted: msg });
+                        continue;
+                    }
+
+                    console.log('📎 Quoted message type:', Object.keys(quoted));
+                    const audioMsg = quoted.audioMessage;
+                    if (!audioMsg || !audioMsg.mediaKey) {
+                        console.error('❌ Audio message is invalid or missing mediaKey');
+                        await sock.sendMessage(sender, { text: '⚠️ Invalid or corrupt audio message.' }, { quoted: msg });
+                        continue;
+                    }
+
+                    let filename: string | null = null;
+                    try {
+                        const buffer = await downloadMediaMessage(
+                            { message: { audioMessage: audioMsg } } as any,
+                            'buffer',
+                            {}
+                        );
+                        const mimetype = audioMsg.mimetype ?? undefined;
+                        const extension = mimetype ? mime.extension(mimetype) || 'ogg' : 'ogg';
+                        filename = `./audio-${Date.now()}.${extension}`;
+                        fs.writeFileSync(filename, buffer);
+
+                        const transcript = await transcribeAudio(filename, langCode);
+                        await sock.sendMessage(sender, { text: `🗣️ ${transcript}` }, { quoted: msg });
+                    } catch (err) {
+                        console.error('❌ Transcription failed:', err);
+                        await sock.sendMessage(sender, { text: '⚠️ Failed to transcribe audio message.' }, { quoted: msg });
+                    } finally {
+                        if (filename && fs.existsSync(filename)) {
+                            fs.unlinkSync(filename);
+                        }
+                    }
+
+                    continue;
+                }
+
+                // 🌍 Translation
                 if (!sender || !rawText.startsWith('/translate')) return;
 
                 const isReply = !!msg.message?.extendedTextMessage?.contextInfo?.quotedMessage;
@@ -52,7 +106,7 @@ async function startBot() {
                 const translated = overrideLang
                     ? await translateTextTo(query, overrideLang)
                     : await translateTextAuto(query);
-                await sock.sendMessage(sender, { text: `🌍 ${translated}` }, { quoted: msg });
+                await sock.sendMessage(sender, { text: `${translated}` }, { quoted: msg });
 
             } catch (err) {
                 if (err instanceof Error && err.message.includes('Bad MAC')) {
