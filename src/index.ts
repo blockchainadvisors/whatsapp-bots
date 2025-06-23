@@ -1,8 +1,9 @@
+//src/index.ts
 import * as baileys from '@whiskeysockets/baileys';
 import { Boom } from '@hapi/boom';
 import * as dotenv from 'dotenv';
 import pino from 'pino';
-import { translateText } from './translator.js';
+import { translateTextAuto, translateTextTo } from './translator.js';
 import qrcode from 'qrcode-terminal';
 import * as QRCode from 'qrcode';
 import * as fs from 'fs';
@@ -25,22 +26,40 @@ async function startBot() {
 
         for (const msg of messages) {
             try {
-                const text = msg.message?.conversation || msg.message?.extendedTextMessage?.text;
-                if (!text) {
+                const rawText =
+                    msg.message?.conversation ||
+                    msg.message?.extendedTextMessage?.text ||
+                    msg.message?.extendedTextMessage?.contextInfo?.quotedMessage?.conversation;
+
+                if (!rawText) {
                     console.warn('⚠️ Skipping undecryptable or unsupported message');
                     continue;
                 }
 
                 const sender = msg.key.remoteJid;
-                if (!sender || !text.startsWith('/translate ')) return;
+                if (!sender || !rawText.startsWith('/translate')) return;
 
-                const query = text.replace('/translate ', '').trim();
-                if (!query) return;
+                const isReply = !!msg.message?.extendedTextMessage?.contextInfo?.quotedMessage;
+                const query = isReply
+                    ? msg.message?.extendedTextMessage?.contextInfo?.quotedMessage?.conversation
+                    : rawText.replace(/^\/translate(\s+\w+)?\s*/, '').trim();
 
-                const translated = await translateText(query);
+                if (!query) continue;
+
+                const langOverrideMatch = rawText.match(/^\/translate\/(\w{2})/);
+                const overrideLang = langOverrideMatch?.[1]?.toLowerCase();
+
+                const translated = overrideLang
+                    ? await translateTextTo(query, overrideLang)
+                    : await translateTextAuto(query);
                 await sock.sendMessage(sender, { text: `🌍 ${translated}` }, { quoted: msg });
 
             } catch (err) {
+                if (err instanceof Error && err.message.includes('Bad MAC')) {
+                    console.warn('⚠️ Signal session error (expected):', err.message);
+                } else {
+                    console.error('❌ Error handling message:', err);
+                }
                 console.error('❌ Error handling message:', err);
                 const fallbackTarget = msg.key.remoteJid;
                 if (fallbackTarget) {
