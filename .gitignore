@@ -45,6 +45,10 @@ jspm_packages/
 # auth folder
 auth/
 
+# temp folders and files
+chunks_*/
+media-*
+
 # Snowpack dependency directory (https://snowpack.dev/)
 web_modules/
 
@@ -137,3 +141,6 @@ dist
 .yarn/build-state.yml
 .yarn/install-state.gz
 .pnp.*
+
+# database
+tasks.db
