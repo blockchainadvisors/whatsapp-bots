@@ -141,8 +141,6 @@ async function handleSttCommand(sock: ReturnType<typeof makeWASocket>, msg: bail
     await markTaskProcessing(taskId, 'stt', langCode);
 
     const quoted: any = msg.message?.extendedTextMessage?.contextInfo?.quotedMessage;
-    // console.log('📦 DEBUG: quotedMessage structure →');
-    // console.dir(quoted, { depth: 6 });
 
     // Try all known locations
     const layers = [

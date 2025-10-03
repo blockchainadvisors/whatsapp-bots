@@ -43,7 +43,7 @@ export async function translateTextTo(text: string, targetLang: string): Promise
   const detectPrompt = `Detect the language of the following text and respond with only its ISO 639-1 code:\n\n"${text}"`;
 
   const detectResp = await openai.chat.completions.create({
-    model: 'gpt-4.1-nano',
+    model: 'gpt-5-nano',
     messages: [{ role: 'user', content: detectPrompt }],
     temperature: 0
   });
@@ -52,7 +52,7 @@ export async function translateTextTo(text: string, targetLang: string): Promise
   const translatePrompt = `Translate this from ${detected} to ${targetLang}:\n\n"${text}"`;
 
   const translateResp = await openai.chat.completions.create({
-    model: 'gpt-4.1-nano',
+    model: 'gpt-5-nano',
     messages: [
       { role: 'system', content: 'You are a helpful translation assistant.' },
       { role: 'user', content: translatePrompt }
