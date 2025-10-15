@@ -17,7 +17,14 @@ import {
     markTaskFailed
 } from './db.js';
 
-const { makeWASocket, useMultiFileAuthState, DisconnectReason, downloadMediaMessage } = baileys;
+const {
+    makeWASocket,
+    useMultiFileAuthState,
+    DisconnectReason,
+    downloadMediaMessage,
+    fetchLatestBaileysVersion,
+    Browsers
+} = baileys;
 
 dotenv.config();
 
@@ -218,10 +225,14 @@ async function startBot() {
     console.log('Starting the app');
     await initDB();
     console.log('Database initialized');
+    const { version } = await fetchLatestBaileysVersion();
     const { state, saveCreds } = await useMultiFileAuthState('./auth');
     const sock = makeWASocket({
         auth: state,
-        logger: pino({ level: 'silent' })
+        logger: pino({ level: 'silent' }),
+        version,
+        browser: Browsers.macOS('Desktop'),
+        printQRInTerminal: true
     });
 
     sock.ev.on('creds.update', saveCreds);
@@ -280,6 +291,15 @@ async function startBot() {
     });
 
     sock.ev.on('connection.update', async ({ connection, lastDisconnect, qr }) => {
+        const statusCode = isBoom(lastDisconnect?.error)
+            ? lastDisconnect?.error?.output?.statusCode
+            : undefined;
+        console.log('🔌 connection.update', {
+            connection,
+            hasQr: !!qr,
+            statusCode,
+            error: lastDisconnect?.error?.message
+        });
         if (qr) {
             console.log('📱 Scan this QR to log in:');
             qrcode.generate(qr, { small: true }); // terminal output
@@ -294,9 +314,16 @@ async function startBot() {
         }
 
         if (connection === 'close') {
-            const shouldReconnect =
-                isBoom(lastDisconnect?.error) &&
-                lastDisconnect.error.output.statusCode !== DisconnectReason.loggedOut; if (shouldReconnect) startBot();
+            const shouldReconnect = isBoom(lastDisconnect?.error)
+                ? lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut
+                : true;
+
+            if (shouldReconnect) {
+                console.log('🔁 Connection closed. Attempting to restart…');
+                startBot().catch(err => console.error('❌ Failed to restart bot:', err));
+            } else {
+                console.log('👋 Logged out. Not reconnecting automatically.');
+            }
         }
 
         if (connection === 'open') {
