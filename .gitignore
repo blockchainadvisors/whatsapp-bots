@@ -148,3 +148,4 @@ tasks.db
 # Ignore lock file and QR image
 package-lock.json
 qr.png
+QR.png
