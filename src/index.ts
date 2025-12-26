@@ -16,6 +16,7 @@ import {
     markTaskDone,
     markTaskFailed
 } from './db.js';
+import { clearAuthDir, startDashboard, type DashboardState } from './dashboard.js';
 
 const {
     makeWASocket,
@@ -27,6 +28,62 @@ const {
 } = baileys;
 
 dotenv.config();
+
+function normalizeJid(jid?: string | null): string | undefined {
+    if (!jid) return undefined;
+    return jid.replace('@lid', '@s.whatsapp.net');
+}
+
+function stripDevice(jid: string): string {
+    return jid.replace(/:\d+(?=@)/, '');
+}
+
+function getSelfJids(sock: ReturnType<typeof makeWASocket>): {
+    selfJid?: string;
+    selfJids: Set<string>;
+} {
+    const selfJids = new Set<string>();
+
+    const id = normalizeJid(sock.user?.id);
+    if (id) selfJids.add(id);
+    if (id) selfJids.add(stripDevice(id));
+
+    const maybeLid = (sock.user as any)?.lid as string | undefined;
+    const lid = normalizeJid(maybeLid);
+    if (lid) selfJids.add(lid);
+    if (lid) selfJids.add(stripDevice(lid));
+
+    const selfJid = id ? stripDevice(id) : undefined;
+    return { selfJid, selfJids };
+}
+
+function computeReplyTarget(
+    msg: baileys.proto.IWebMessageInfo,
+    isPrivate: boolean,
+    self?: { selfJid?: string; selfJids: Set<string> }
+): string | undefined {
+    const ctx = msg.message?.extendedTextMessage?.contextInfo;
+    const remoteJid = normalizeJid(msg.key.remoteJid);
+    const participantJid = normalizeJid(msg.key.participant || msg.participant);
+    const quotedRemoteJid = normalizeJid(ctx?.remoteJid);
+
+    if (isPrivate) {
+        return participantJid || remoteJid;
+    }
+
+    // Prefer replying to the active group chat; if the quoted message is in a group, target that.
+    if (remoteJid?.endsWith('@g.us')) return remoteJid;
+    if (quotedRemoteJid?.endsWith('@g.us')) return quotedRemoteJid;
+
+    // Special-case: WhatsApp "message yourself" can show up with a LID-based remoteJid.
+    // Route replies to the real self JID so they stay in the self-chat UI.
+    if (remoteJid && self?.selfJid && self.selfJids.has(remoteJid)) {
+        return self.selfJid;
+    }
+
+    // 1:1 chats: reply to the conversation JID (avoid quoted remotes that might be forwarded).
+    return remoteJid;
+}
 
 function parseCommand(raw: string, prefix: string, fallbackLang = 'auto') {
     const match = raw.match(new RegExp(`^\\/${prefix}(?:\\/(\\w+))?(?:\\/(\\w+))?`, 'i'));
@@ -42,6 +99,7 @@ function parseCommand(raw: string, prefix: string, fallbackLang = 'auto') {
 async function handleTranslationCommand(sock: ReturnType<typeof makeWASocket>, msg: baileys.proto.IWebMessageInfo, rawText: string, prefix: string) {
     const { lang: overrideLang, isPrivate } = parseCommand(rawText, prefix, 'auto');
     const isReply = !!msg.message?.extendedTextMessage?.contextInfo?.quotedMessage;
+    const self = getSelfJids(sock);
 
     let query: string | undefined;
     if (isReply) {
@@ -72,9 +130,7 @@ async function handleTranslationCommand(sock: ReturnType<typeof makeWASocket>, m
         return;
     }
 
-    const messageAuthor = msg.key.participant || msg.participant || msg.key.remoteJid;
-    const realUserJid = messageAuthor?.replace('@lid', '@s.whatsapp.net');
-    const replyTarget = isPrivate ? realUserJid : msg.key.remoteJid;
+    const replyTarget = computeReplyTarget(msg, isPrivate, self);
 
     if (!replyTarget) {
         console.warn('⚠️ Could not determine a valid recipient JID for private reply. Skipping...');
@@ -115,13 +171,12 @@ async function handleTranslationCommand(sock: ReturnType<typeof makeWASocket>, m
 async function handleSttCommand(sock: ReturnType<typeof makeWASocket>, msg: baileys.proto.IWebMessageInfo, rawText: string, prefix: string) {
     const { lang: langCode, isPrivate } = parseCommand(rawText, prefix, process.env.SOURCE_LANG || 'ro');
     const isReply = !!msg.message?.extendedTextMessage?.contextInfo?.quotedMessage;
+    const self = getSelfJids(sock);
     const taskId = isReply
         ? msg.message?.extendedTextMessage?.contextInfo?.stanzaId
         : msg.key.id;
 
-    const messageAuthor = msg.key.participant || msg.participant || msg.key.remoteJid;
-    const realUserJid = messageAuthor?.replace('@lid', '@s.whatsapp.net');
-    const replyTarget = isPrivate ? realUserJid : msg.key.remoteJid;
+    const replyTarget = computeReplyTarget(msg, isPrivate, self);
 
     console.log(`🧾 Computed replyTarget = ${replyTarget} | isPrivate=${isPrivate}`);
 
@@ -227,12 +282,20 @@ async function startBot() {
     console.log('Database initialized');
     const { version } = await fetchLatestBaileysVersion();
     const { state, saveCreds } = await useMultiFileAuthState('./auth');
+    const dashboardState: DashboardState = { lastUpdatedMs: Date.now() };
     const sock = makeWASocket({
         auth: state,
         logger: pino({ level: 'silent' }),
         version,
-        browser: Browsers.macOS('Desktop'),
-        printQRInTerminal: true
+        browser: Browsers.macOS('Desktop')
+    });
+
+    startDashboard({
+        getState: () => dashboardState,
+        resetAuth: () => {
+            console.log('🧹 Resetting auth directory and restarting…');
+            clearAuthDir('./auth');
+        }
     });
 
     sock.ev.on('creds.update', saveCreds);
@@ -294,6 +357,10 @@ async function startBot() {
         const statusCode = isBoom(lastDisconnect?.error)
             ? lastDisconnect?.error?.output?.statusCode
             : undefined;
+        dashboardState.connection = connection;
+        dashboardState.statusCode = statusCode;
+        dashboardState.error = lastDisconnect?.error?.message;
+        dashboardState.lastUpdatedMs = Date.now();
         console.log('🔌 connection.update', {
             connection,
             hasQr: !!qr,
@@ -301,6 +368,7 @@ async function startBot() {
             error: lastDisconnect?.error?.message
         });
         if (qr) {
+            dashboardState.qr = qr;
             console.log('📱 Scan this QR to log in:');
             qrcode.generate(qr, { small: true }); // terminal output
 
@@ -314,6 +382,7 @@ async function startBot() {
         }
 
         if (connection === 'close') {
+            dashboardState.qr = undefined;
             const shouldReconnect = isBoom(lastDisconnect?.error)
                 ? lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut
                 : true;
@@ -328,6 +397,14 @@ async function startBot() {
 
         if (connection === 'open') {
             console.log('✅ Connected to WhatsApp');
+            const self = getSelfJids(sock);
+            if (self.selfJid) console.log(`👤 Logged in as ${self.selfJid}`);
+            const lid = normalizeJid((sock.user as any)?.lid);
+            if (lid) console.log(`🪪 Logged in LID ${lid}`);
+            dashboardState.qr = undefined;
+            dashboardState.loggedInAs = self.selfJid;
+            dashboardState.loggedInLid = lid ? stripDevice(lid) : undefined;
+            dashboardState.lastUpdatedMs = Date.now();
             // Set profile name and status once connection is open
             // try {
             //     await sock.updateProfileName('I Robot');

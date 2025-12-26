@@ -5,8 +5,8 @@ Node.js bot built on top of [`@whiskeysockets/baileys`](https://github.com/Whisk
 ---
 
 ## 1. Requirements
-- **Node.js 20** (matches the version used in production: `v20.19.2`).
-- **npm 9+** (bundled with Node 20).
+- **Node.js 24** (tested with `v24.12.0`).
+- **npm 11+** (bundled with Node 24).
 - **FFmpeg** with `ffprobe` (required for audio/video transcription via `fluent-ffmpeg`).
   - Ubuntu/Debian: `sudo apt install ffmpeg`
   - macOS (Homebrew): `brew install ffmpeg`
@@ -41,6 +41,10 @@ Node.js bot built on top of [`@whiskeysockets/baileys`](https://github.com/Whisk
    - `OPENAI_API_KEY_FOR_STT` – used for Whisper speech-to-text (`transcribeAudio`).
    - Optional overrides:
      - `OPENAI_AUDIO_MODEL` – defaults to `whisper-1`.
+   - Optional web dashboard (password required):
+     - `WEB_PASSWORD` – enables the dashboard and protects it with HTTP Basic auth.
+     - `WEB_HOST` – bind address (default `127.0.0.1`).
+     - `WEB_PORT` – port (default `3000`).
 3. **Persisted state**:
    - Authentication credentials are stored under the `auth/` directory. Delete this folder to force a fresh login.
    - Translation/transcription task cache lives in `tasks.db` (SQLite). It is created automatically.
@@ -88,6 +92,12 @@ Baileys uses WhatsApp Web multi-device sessions. Follow these steps whenever you
    - The QR also saves to `QR.png` in the project root for convenience.
 5. **On your phone**: open WhatsApp → *Linked devices* → *Link a device*, then scan the QR code.
 6. Once paired, the logs show `✅ Connected to WhatsApp`. Credentials are stored under `auth/`; do not delete this folder unless you need to re-link.
+
+### Optional: Web Dashboard (QR + Reset Auth)
+If `WEB_PASSWORD` is set, the bot starts a tiny dashboard:
+- Open `http://WEB_HOST:WEB_PORT` and authenticate with any username + your `WEB_PASSWORD`.
+- The page auto-refreshes and shows the current QR (when relogin is needed).
+- Use “Reset auth + restart” to delete `auth/` and let PM2 restart the bot, forcing a fresh QR.
 
 ---
 

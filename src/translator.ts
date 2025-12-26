@@ -14,8 +14,7 @@ export async function translateTextAuto(text: string): Promise<string> {
 
   const detectResp = await openai.chat.completions.create({
     model: 'gpt-4.1-nano',
-    messages: [{ role: 'user', content: detectPrompt }],
-    temperature: 0
+    messages: [{ role: 'user', content: detectPrompt }]
   });
 
   const detected = detectResp.choices?.[0]?.message?.content?.trim().toLowerCase();
@@ -32,8 +31,7 @@ export async function translateTextAuto(text: string): Promise<string> {
     messages: [
       { role: 'system', content: 'You are a helpful translation assistant.' },
       { role: 'user', content: translatePrompt }
-    ],
-    temperature: 0.3
+    ]
   });
 
   return translateResp.choices?.[0]?.message?.content?.trim() ?? '';
@@ -44,8 +42,7 @@ export async function translateTextTo(text: string, targetLang: string): Promise
 
   const detectResp = await openai.chat.completions.create({
     model: 'gpt-5-nano',
-    messages: [{ role: 'user', content: detectPrompt }],
-    temperature: 0
+    messages: [{ role: 'user', content: detectPrompt }]
   });
 
   const detected = detectResp.choices?.[0]?.message?.content?.trim().toLowerCase();
@@ -56,10 +53,8 @@ export async function translateTextTo(text: string, targetLang: string): Promise
     messages: [
       { role: 'system', content: 'You are a helpful translation assistant.' },
       { role: 'user', content: translatePrompt }
-    ],
-    temperature: 0.3
+    ]
   });
 
   return translateResp.choices?.[0]?.message?.content?.trim() ?? '';
 }
-
